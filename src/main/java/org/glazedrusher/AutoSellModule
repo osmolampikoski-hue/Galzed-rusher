@@ -1,0 +1,69 @@
+package org.glazedrusher;
+
+import net.minecraft.client.gui.screen.ingame.GenericContainerScreen;
+import net.minecraft.screen.slot.SlotActionType;
+import org.rusherhack.client.api.events.client.EventUpdate;
+import org.rusherhack.client.api.feature.module.ModuleCategory;
+import org.rusherhack.client.api.feature.module.ToggleableModule;
+import org.rusherhack.core.event.subscribe.Subscribe;
+import org.rusherhack.core.setting.BooleanSetting;
+import org.rusherhack.core.setting.NumberSetting;
+
+public class AutoSellModule extends ToggleableModule {
+
+    private final NumberSetting<Integer> clickDelay = new NumberSetting<>("TickDelay", "Ticks between slot transfers", 2, 1, 10);
+    private final NumberSetting<Integer> commandInterval = new NumberSetting<>("SellInterval", "Seconds between /sell commands", 30, 5, 300);
+    private final BooleanSetting autoOpenSell = new BooleanSetting("AutoCommand", "Automatically send /sell when timer hits", false);
+    private final BooleanSetting autoClose = new BooleanSetting("AutoClose", "Close /sell GUI once inventory items are moved", true);
+
+    private int tickCounter = 0;
+    private int commandTimer = 0;
+
+    public AutoSellModule() {
+        super("GlazedAutoSell", "Rapidly dumps inventory items into /sell menu", ModuleCategory.MISC);
+        this.registerSettings(this.clickDelay, this.commandInterval, this.autoOpenSell, this.autoClose);
+    }
+
+    @Subscribe
+    private void onUpdate(EventUpdate event) {
+        if (mc.player == null || mc.interactionManager == null) return;
+
+        // Optional periodic /sell command sender
+        if (autoOpenSell.getValue() && mc.currentScreen == null) {
+            if (++commandTimer >= commandInterval.getValue() * 20) {
+                commandTimer = 0;
+                mc.player.networkHandler.sendChatCommand("sell");
+                return;
+            }
+        }
+
+        // If inside a container screen (e.g., Donut /sell GUI)
+        if (mc.currentScreen instanceof GenericContainerScreen screen) {
+            if (++tickCounter < clickDelay.getValue()) return;
+            tickCounter = 0;
+
+            var handler = screen.getScreenHandler();
+            int containerSlots = handler.getRows() * 9;
+            boolean movedItem = false;
+
+            // Scan player inventory slots inside the GUI and quick-move (SHIFT_THROW/QUICK_MOVE)
+            for (int i = containerSlots; i < handler.slots.size(); i++) {
+                if (handler.getSlot(i).hasStack()) {
+                    mc.interactionManager.clickSlot(
+                            handler.syncId,
+                            i,
+                            0,
+                            SlotActionType.QUICK_MOVE,
+                            mc.player
+                    );
+                    movedItem = true;
+                    break; // Respect tick delay per click to avoid packet kick
+                }
+            }
+
+            if (!movedItem && autoClose.getValue()) {
+                mc.player.closeHandledScreen();
+            }
+        }
+    }
+}
